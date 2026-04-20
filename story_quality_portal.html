@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<body style="margin:0;display:grid;place-items:center;height:100vh;font-family:Arial,sans-serif;">
+  <button id="go" style="padding:14px 22px;font-size:16px;cursor:pointer;">Improve with Assistant</button>
+
+  <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);place-items:center;">
+    <div style="width:min(680px,92vw);height:min(80vh,620px);background:#fff;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;">
+      <div style="padding:10px 12px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;">
+        <strong>AI Grooming Assistant</strong>
+        <button id="close" style="border:0;background:#f3f3f3;padding:6px 10px;cursor:pointer;">Close</button>
+      </div>
+
+      <div id="chat" style="flex:1;overflow:auto;padding:12px;background:#fafafa;"></div>
+
+      <div style="border-top:1px solid #eee;padding:10px;display:grid;gap:8px;">
+        <textarea id="input" rows="3" placeholder="Paste Jira story to start..." style="width:100%;resize:vertical;padding:8px;"></textarea>
+        <button id="send" style="padding:10px;cursor:pointer;">Send</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  let threadId = null;
+  let waitingForAnswer = false;
+
+  const go = document.getElementById("go");
+  const modal = document.getElementById("modal");
+  const closeBtn = document.getElementById("close");
+  const chat = document.getElementById("chat");
+  const input = document.getElementById("input");
+  const send = document.getElementById("send");
+
+  function addMsg(text, who = "assistant") {
+    const row = document.createElement("div");
+    row.style.margin = "8px 0";
+    row.style.whiteSpace = "pre-wrap";
+    row.style.color = who === "user" ? "#0b57d0" : who === "error" ? "#b00020" : "#222";
+    row.textContent = (who === "user" ? "You: " : who === "error" ? "Error: " : "Assistant: ") + text;
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  async function post(url, body) {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    let data = {};
+    try { data = await r.json(); } catch (_) {}
+
+    if (!r.ok) {
+      const d = data?.detail;
+      const msg = (typeof d === "string" ? d : d?.message) || `Request failed (${r.status})`;
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  function finalText(finalState) {
+    return (
+      finalState?.final_story ||
+      finalState?.story ||
+      finalState?.final_state?.final_story ||
+      JSON.stringify(finalState || {}, null, 2)
+    );
+  }
+
+  function resetSession() {
+    threadId = null;
+    waitingForAnswer = false;
+    chat.innerHTML = "";
+    input.value = "";
+    input.placeholder = "Paste Jira story to start...";
+    addMsg("Paste your story and click Send.");
+  }
+
+  function handleResponse(res) {
+    if (res.thread_id) threadId = res.thread_id;
+
+    if (res.is_aborted) {
+      addMsg(`Aborted: ${res.abort_reason || "Maximum retries exceeded."}`, "error");
+      waitingForAnswer = false;
+      input.placeholder = "Session ended.";
+      return;
+    }
+
+    if (res.status === "completed") {
+      addMsg(finalText(res.final_state));
+      waitingForAnswer = false;
+      input.placeholder = "Completed. Paste a new story to start again.";
+      threadId = null;
+      return;
+    }
+
+    if (res.status === "suspended") {
+      addMsg(res.required_action || "Your input is needed.");
+      waitingForAnswer = true;
+      input.placeholder = "Type your answer and click Send...";
+      return;
+    }
+
+    addMsg("Unexpected response from server.", "error");
+  }
+
+  go.addEventListener("click", () => {
+    modal.style.display = "grid";
+    if (!chat.childNodes.length) resetSession();
+    input.focus();
+  });
+
+  closeBtn.addEventListener("click", () => {
+    modal.style.display = "none";
+  });
+
+  send.addEventListener("click", async () => {
+    const text = input.value.trim();
+    if (!text) return;
+
+    try {
+      if (!threadId && !waitingForAnswer) {
+        addMsg(text, "user");
+        input.value = "";
+        const res = await post("/grooming/start", { text });
+        handleResponse(res);
+      } else {
+        addMsg(text, "user");
+        input.value = "";
+        const res = await post("/grooming/step", { thread_id: threadId, user_input: text });
+        handleResponse(res);
+      }
+    } catch (e) {
+      addMsg(e.message || "An internal error occurred.", "error");
+    }
+  });
+</script>
+</body>
+</html>
