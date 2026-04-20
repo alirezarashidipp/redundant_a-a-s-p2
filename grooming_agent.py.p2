@@ -1,0 +1,83 @@
+import uuid
+
+from src.services.grooming_graph import graph
+
+def create_initial_state(text: str) -> dict:
+    return {
+        "thread_id": str(uuid.uuid4()),
+        "raw_input": text,
+    }
+
+async def invoke(state: dict) -> dict:
+    thread_id = state.get("thread_id") or str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
+    user_input = state.get("user_input")
+    or state.get("user_injected_response")
+    raw_input = state.get("raw_input")
+
+    snapshot = graph.get_state(config)
+    has_checkpoint = bool(getattr(snapshot, "values", None)
+    or getattr(snapshot, "next", None)
+    or getattr(snapshot, "tasks", None))
+
+    if has_checkpoint:
+        if not user_input:
+            return {
+                "status": "pending",
+                "message": "User input is required to resume.",
+                "thread_id": thread_id,
+            }
+        graph_input = {
+            "user_injected_response": user_input,
+            "action_required": False,
+            "action_prompt": None,
+        }
+    else:
+        initial_text = raw_input or user_input
+        if not initial_text:
+            return {
+                "status": "pending",
+                "message": "User input is required to resume.",
+                "thread_id": thread_id,
+            }
+        graph_input = {
+            "raw_input": initial_text,
+            "action_required": False,
+            "action_prompt": None,
+            "user_injected_response": None,
+        }
+
+    result = await graph.ainvoke(graph_input, config=config)
+
+    if not isinstance(result, dict):
+        return {
+            "status": "completed",
+            "final_state": {"result": result},
+            "thread_id": thread_id,
+        }
+
+    if result.get("is_aborted"):
+        return {
+            "is_aborted": True,
+            "abort_reason": result.get("abort_reason")
+            or "Maximum retries exceeded.",
+            "thread_id": thread_id,
+        }
+
+    if result.get("action_required"):
+        return {
+            "status": "suspended",
+            "required_action": result.get("action_prompt")
+            or "Input required to continue.",
+            "thread_id": thread_id,
+        }
+
+    return {
+        "status": "completed",
+        "final_state": result,
+        "thread_id": thread_id,
+    }
+
+async def process_step(thread_id: str, user_input: str = None) -> dict:
+    return await invoke({"thread_id": thread_id, "user_input": user_input})
