@@ -69,8 +69,7 @@ async def phase1_lock(state: WorkflowState) -> dict:
         }
 
     sys_prompt = PROMPTS["validator"]["system"].format(field=target)
-    result = await asyncio.to_thread(llm.query, sys_prompt,
-    f"User provided: {user_val}", ValidatorOutput)
+    result = await asyncio.to_thread(llm.query, sys_prompt, f"User provided: {user_val}", ValidatorOutput)
 
     if result.is_valid:
         return {
@@ -87,17 +86,13 @@ async def phase1_lock(state: WorkflowState) -> dict:
     }
 
 async def phase2_tech_lead(state: WorkflowState) -> dict:
-    if state.get("pending_questions") \
-    or state.get("total_tech_questions", 0) > 0:
+    if state.get("pending_questions") or state.get("total_tech_questions", 0) > 0:
         return {}
 
-    sys_prompt = PROMPTS["tech_lead"]["system"].format(what=state["what"],
-    why=state["why"])
-    result = await asyncio.to_thread(llm.query, sys_prompt,
-    "Review and generate technical questions.", TechQuestionsOutput)
+    sys_prompt = PROMPTS["tech_lead"]["system"].format(what=state["what"], why=state["why"])
+    result = await asyncio.to_thread(llm.query, sys_prompt, "Review and generate technical questions.", TechQuestionsOutput)
 
-    return {"pending_questions": result.questions,
-    "total_tech_questions": len(result.questions)}
+    return {"pending_questions": result.questions, "total_tech_questions": len(result.questions)}
 
 async def phase2_ask_questions(state: WorkflowState) -> dict:
     questions = state.get("pending_questions", [])
@@ -126,10 +121,8 @@ async def phase2_ask_questions(state: WorkflowState) -> dict:
             "user_injected_response": None,
         }
 
-    sys_prompt = PROMPTS["inline_validator"]["system"].format(
-    question=current_q, answer=user_answer)
-    result = await asyncio.to_thread(llm.query, sys_prompt,
-    f"Evaluate answer: {user_answer}", ValidatorOutput)
+    sys_prompt = PROMPTS["inline_validator"]["system"].format(question=current_q, answer=user_answer)
+    result = await asyncio.to_thread(llm.query, sys_prompt, f"Evaluate answer: {user_answer}", ValidatorOutput)
 
     new_notes = list(state.get("tech_notes", []))
     if result.is_valid and result.normalized_value:
@@ -146,13 +139,12 @@ async def phase2_ask_questions(state: WorkflowState) -> dict:
 async def phase3_synthesize(state: WorkflowState) -> dict:
     tech_notes_str = "\n".join(state.get("tech_notes", []))
     sys_prompt = PROMPTS["agile_coach"]["system"].format(
-        who=state["who"], what=state["what"], why=state["why"],
+        who=state["who"], what=state["what"], why=state["why"], 
         tech_notes=tech_notes_str, ac_evidence=state.get("ac_evidence", ""),
         feedback=state.get("feedback_raw", "")
     )
 
-    result = await asyncio.to_thread(llm.query,
-    sys_prompt, "Generate final Jira story.", FinalStoryOutput)
+    result = await asyncio.to_thread(llm.query, sys_prompt, "Generate final Jira story.", FinalStoryOutput)
     return {"final_story": result.story, "feedback_raw": None}
 
 async def phase3_feedback(state: WorkflowState) -> dict:
