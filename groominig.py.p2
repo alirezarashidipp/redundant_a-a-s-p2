@@ -1,0 +1,47 @@
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+import traceback
+from typing import Any
+
+from src.services import grooming_agent
+
+router = APIRouter(prefix="/grooming", tags=["grooming"])
+
+class StartRequest(BaseModel):
+    text: str
+
+def _build_error_payload(exc: Exception) -> dict[str, Any]:
+    raw_message = str(exc).strip()
+    message = raw_message or "Internal grooming error"
+    trace_lines = traceback.format_exc().strip().splitlines()
+    if not trace_lines:
+        trace_lines = [f"{exc.__class__.__name__}: {message}"]
+    return {
+        "type": exc.__class__.__name__,
+        "message": message,
+        "trace": trace_lines,
+    }
+
+@router.post("/start")
+async def start_grooming(req: StartRequest) -> dict:
+    try:
+        state = grooming_agent.create_initial_state(req.text)
+        return await grooming_agent.invoke(state)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500,
+                            detail=_build_error_payload(exc))
+
+@router.post("/step")
+async def step_grooming(state: dict) -> dict:
+    try:
+        if state.get("is_complete") or state.get("is_aborted"):
+            raise HTTPException(status_code=400,
+                                detail="Session is already finished.")
+        return await grooming_agent.invoke(state)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500,
+                            detail=_build_error_payload(exc))
